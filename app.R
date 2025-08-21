@@ -10,11 +10,14 @@ if (!require("DT")) install.packages("DT")
 if (!require("shinyjs")) install.packages("shinyjs")
 if (!require("pagedown")) install.packages("pagedown")
 if (!require("htmltools")) install.packages("htmltools")
-# Added (already used earlier): PDF ggplot + histogram
 if (!require("ggplot2")) install.packages("ggplot2")
 if (!require("ggthemes")) install.packages("ggthemes")
 if (!require("scales")) install.packages("scales")
 if (!require("base64enc")) install.packages("base64enc")
+if (!require("RColorBrewer")) install.packages("RColorBrewer")
+# Fallback PDF engines
+if (!require("webshot2")) install.packages("webshot2")
+if (!require("webshot"))  install.packages("webshot")
 
 # Load required libraries
 library(shiny)
@@ -25,104 +28,65 @@ library(plotly)
 library(viridis)
 library(zoo)
 library(DT)
-library(shinyjs)   # Load shinyjs for JavaScript capabilities
-library(pagedown)  # For HTML -> PDF
-library(htmltools) # For building/saving HTML
-# Added for PDF ggplot + histogram
+library(shinyjs)
+library(pagedown)
+library(htmltools)
 library(ggplot2)
 library(ggthemes)
 library(scales)
 library(base64enc)
+library(RColorBrewer)
+# (webshot2/webshot loaded by namespace in code paths)
 
 # Password to access the app
 correct_password <- "public"
+
 # List of available stock symbols
 available_stocks <- c("AAPL", "MSFT", "GOOG", "AMZN", "TSLA", "NVDA", "META", "NFLX", "BA", "DIS", "BRK-B")
 
-# Custom CSS for dark mode styling, thick borders around sections, and square frames around each stock
+# Custom CSS (dark mode and frames)
 dark_mode_css <- "
-  body, .shiny-input-container {
-    background-color: #1e1e1e !important;
-    color: #00BFFF !important;
-  }
-  .well {
-    background-color: #333333 !important;
-    color: #00BFFF !important;
-  }
-  .btn {
-    background-color: #4CAF50 !important;
-    color: #ffffff !important;
-    border-color: #4CAF50 !important;
-  }
-  .btn:hover {
-    background-color: #66bb6a !important;
-    border-color: #66bb6a !important;
-  }
+  body, .shiny-input-container { background-color: #1e1e1e !important; color: #00BFFF !important; }
+  .well { background-color: #333333 !important; color: #00BFFF !important; }
+  .btn { background-color: #4CAF50 !important; color: #ffffff !important; border-color: #4CAF50 !important; }
+  .btn:hover { background-color: #66bb6a !important; border-color: #66bb6a !important; }
   .form-control, .selectize-input, .selectize-control.single .selectize-input, .selectize-control.multi .selectize-input > div {
-    background-color: #333333 !important;
-    color: #00BFFF !important;
-    border-color: #4a4a4a !important;
+    background-color: #333333 !important; color: #00BFFF !important; border-color: #4a4a4a !important;
   }
-
-  /* Password input dark style (incl. autofill) */
-  input[type='password'] {
-    background-color: #333333 !important;
-    color: #ffffff !important;
-    border: 1px solid #4a4a4a !important;
-  }
-  input[type='password']::placeholder {
-    color: #9ecff5 !important;
-    opacity: 0.7;
-  }
+  input[type='password'] { background-color: #333333 !important; color: #ffffff !important; border: 1px solid #4a4a4a !important; }
+  input[type='password']::placeholder { color: #9ecff5 !important; opacity: 0.7; }
   input[type='password']:-webkit-autofill,
   input[type='password']:-webkit-autofill:hover,
   input[type='password']:-webkit-autofill:focus,
   input[type='password']:-webkit-autofill:active {
-    -webkit-text-fill-color: #ffffff !important;
-    transition: background-color 5000s ease-in-out 0s;
-    box-shadow: 0 0 0px 1000px #333333 inset !important;
-    caret-color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important; transition: background-color 5000s ease-in-out 0s;
+    box-shadow: 0 0 0px 1000px #333333 inset !important; caret-color: #ffffff !important;
   }
-
-  .dataTables_wrapper .dataTables_length, 
-  .dataTables_wrapper .dataTables_filter,
-  .dataTables_wrapper .dataTables_info, 
-  .dataTables_wrapper .dataTables_paginate,
-  table.dataTable tbody th, table.dataTable tbody td {
-    color: #00BFFF !important;
+  .dataTables_wrapper .dataTables_length, .dataTables_wrapper .dataTables_filter,
+  .dataTables_wrapper .dataTables_info, .dataTables_wrapper .dataTables_paginate,
+  table.dataTable tbody th, table.dataTable tbody td { color: #00BFFF !important; }
+  .stock-frame, .portfolio-frame, .plot-frame, .stocks-section-frame, .df-section-frame {
+    border: 4px solid #000000; border-radius: 5px; padding: 15px; margin-top: 15px; background-color: #333333;
   }
-  .stock-frame {
-    border: 4px solid #000000;
-    border-radius: 5px;
-    padding: 15px;
-    margin-top: 15px;
-    background-color: #333333;
-  }
-  .portfolio-frame, .plot-frame, .stocks-section-frame, .df-section-frame {
-    border: 4px solid #000000;
-    border-radius: 5px;
-    padding: 15px;
-    margin-top: 15px;
-    background-color: #333333;
-  }
+  /* Save-tip layout & color: inherits the same color as labels */
+  .save-tip { display:flex; gap:10px; align-items:center; color: inherit; }
+  .save-tip p { margin:0; font-size: 12px; line-height: 1.2; }
 "
 
 # JavaScript to enable Enter key for password input
 enter_key_js <- "
-  $(document).on('keypress', function(e) {
-    if(e.which == 13) {
-      $('#login_button').click();
-    }
-  });
+  $(document).on('keypress', function(e) { if(e.which == 13) { $('#login_button').click(); } });
 "
 
-# Define UI for the Shiny App
+# =========================
+#           UI
+# =========================
 ui <- fluidPage(
-  useShinyjs(),  # Enable shinyjs
-  tags$head(tags$style(HTML(dark_mode_css))),  # Apply the dark mode CSS
-  tags$head(tags$script(HTML(enter_key_js))),  # JavaScript for Enter key
-  
-  # Centered title and subtitle
+  useShinyjs(),
+  # Load EB Garamond for in-app report rendering
+  tags$head(tags$link(rel="stylesheet", href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;700&display=swap")),
+  tags$head(tags$style(HTML(dark_mode_css))),
+  tags$head(tags$script(HTML(enter_key_js))),
   titlePanel(
     div(
       h1("Portfolio Analysis App", style = "text-align: center;"),
@@ -130,63 +94,70 @@ ui <- fluidPage(
     ),
     windowTitle = "Portfolio Analysis App"
   ),
-  
-  # Conditional panel for password entry
   uiOutput("login_ui"),
-  
-  # Main UI content for the app, only visible after successful login
   conditionalPanel(
     condition = "output.loggedIn == true",
     sidebarLayout(
       sidebarPanel(
-        # Portfolio section with title and frame
+        # Portfolio block
         div(
           h3("Portfolio", style = "color: #00BFFF;"),
           textInput("portfolio_name", "Portfolio Name: (type the name of your portfolio or leave the default)", value = "My Portfolio"),
           fluidRow(
-            column(6,
-                   dateInput("start_date", "Portfolio Start Date: (click in the default date and select in the calendar the start date)", value = Sys.Date() - 365)
-            ),
-            column(6,
-                   dateInput("end_date", "Portfolio End Date: (click in the default date and select in the calendar the end date)", value = Sys.Date())
-            )
+            column(6, dateInput("start_date", "Portfolio Start Date", value = Sys.Date() - 365)),
+            column(6, dateInput("end_date", "Portfolio End Date", value = Sys.Date()))
           ),
           class = "portfolio-frame"
         ),
         
-        # Stocks section with title and outer frame
+        # Stocks section
         div(
           h3("Stocks", style = "color: #00BFFF;"),
-          
-          selectInput("stocks", "Select Stock Symbols:( Click in the space and select within the given tickers, then select the start date and number of shares (can be fractional)) After that save the portfolio", choices = available_stocks, selected = NULL, multiple = TRUE),
-          
-          # Input for individual stock transactions with inner frames around each stock
+          # Label and help share same color via 'inherit'
+          tags$label(
+            style = "display:block; margin-bottom:6px; color: inherit;",
+            "Select Stock Symbols (choose from list; fractions allowed in 'Shares'). Save portfolio after setting shares."
+          ),
+          selectInput(
+            "stocks",
+            NULL,  # label handled above to control color
+            choices = available_stocks, selected = NULL, multiple = TRUE
+          ),
           uiOutput("transaction_inputs"),
           
-          # Add the Save Portfolio button within a frame
+          # Save button + Tip (same color as label)
           div(
+            class = "save-tip",
             actionButton("save_portfolio", "Save Portfolio"),
-            class = "stock-frame"  # Apply the same frame styling as for each stock
+            p("Tip: If you’re analyzing only one portfolio, save and continue to the next section. 
+               If you’re analyzing more than one, save and use Manage tickers to clear the required tickers, 
+               then start the process for each new portfolio, beginning by creating its name. 
+               Repeat until you’ve finished all additional portfolios (2 through n), then continue to the next section.")
           ),
           
-          # Frame for the entire stocks section
+          # Manage tickers
+          div(
+            h4("Manage tickers"),
+            uiOutput("remove_ticker_ui"),
+            actionButton("remove_ticker_btn", "Remove selected ticker"),
+            actionButton("clear_tickers", "Clear all tickers"),
+            style = "margin-top:10px;"
+          ),
+          
           class = "stocks-section-frame"
         ),
         
-        # Plot section with title and frame
+        # Plot options
         div(
           h3("Plot", style = "color: #00BFFF;"),
-          selectInput("portfolios_to_plot", "Select Portfolios to Plot:", choices = NULL, multiple = TRUE),
-          selectInput("plot_type", "Choose Plot Type:(Individual stocks, portfolio or both)", choices = c("Individual", "Portfolio", "Both")),
-          
-          # Frame for the plot section
+          checkboxGroupInput("portfolios_to_plot", "Available portfolios (check to plot):", choices = NULL, selected = NULL, inline = FALSE),
+          selectInput("plot_type", "Choose Plot Type", choices = c("Individual", "Portfolio", "Both")),
           class = "plot-frame"
         ),
         
-        # Place only the "Download and Plot" button below the "Plot" section
         actionButton("go", "Download and Plot"),
         
-        # Data Frame section with Show Dataframe checkbox and Download button
+        # Data frame area
         div(
           h3("Data Frame", style = "color: #00BFFF;"),
           checkboxInput("show_dataframe", "Show Dataframe", value = FALSE),
@@ -196,24 +167,28 @@ ui <- fluidPage(
       ),
       
       mainPanel(
-        # Plot output wrapped in a div for framing
+        # Main line plot
         div(plotlyOutput("stock_plot"), class = "plot-frame"),
         br(),
-        # Daily returns histogram (Plotly) + RED density line
-        div(plotlyOutput("returns_hist_plot"), class = "plot-frame"),
+        # One histogram per portfolio (dynamic)
+        div(uiOutput("returns_hist_container"), class = "plot-frame"),
         br(),
-        # Report below the graph with PDF button
+        # Report block with Garamond 12pt in-app
         div(
-          div(style = "text-align:right; margin-bottom:8px;",
-              downloadButton("download_report_pdf", "Descargar reporte (PDF)")
+          div(style = "text-align:right; margin-bottom:8px; display:flex; gap:8px; justify-content:flex-end;",
+              downloadButton("download_report_html", "Download report (HTML)"),
+              downloadButton("download_report_pdf",  "Download report (PDF)")
           ),
-          uiOutput("portfolio_report"),
+          div(
+            style = "font-family: 'EB Garamond','GaramondPremrPro','Adobe Garamond Pro','EB Garamond', Garamond, serif; font-size: 12pt;",
+            uiOutput("portfolio_report")
+          ),
           class = "portfolio-frame"
         ),
         br(),
         # Dataframe
         conditionalPanel(
-          condition = "input.show_dataframe == true",  # Show dataframe only if checkbox is checked
+          condition = "input.show_dataframe == true",
           DT::dataTableOutput("dataframe_display")
         )
       )
@@ -221,115 +196,101 @@ ui <- fluidPage(
   )
 )
 
-# Define server logic for the Shiny App
+# =========================
+#         SERVER
+# =========================
 server <- function(input, output, session) {
   
-  # Reactive value to check if the user is logged in
   logged_in <- reactiveVal(FALSE)
-  
-  # Reactive value to enable the download button after plot generation
   enable_download <- reactiveVal(FALSE)
   
-  # For report: store last computed data
   rv <- reactiveValues(plot_data = NULL, portfolio_data = NULL, rets_data = NULL)
   
-  # UI for the login screen with caption
+  # ---- Login UI ----
   output$login_ui <- renderUI({
     if (!logged_in()) {
       tagList(
         passwordInput("password", "Enter Password: ( Public Password = public )", value = ""),
         actionButton("login_button", "Login"),
-        p("Created by José Ahumada Castillo", style = "color: #00BFFF; text-align: center;")  # Sign-in page caption
+        p("Created by José Ahumada Castillo", style = "color: #00BFFF; text-align: center;")
       )
     }
   })
-  
-  # Check password on login button click
   observeEvent(input$login_button, {
     if (input$password == correct_password) {
       logged_in(TRUE)
     } else {
-      showModal(modalDialog(
-        title = "Incorrect Password",
-        "The password you entered is incorrect. Please try again.",
-        easyClose = TRUE
-      ))
+      showModal(modalDialog(title = "Incorrect Password", "The password you entered is incorrect. Please try again.", easyClose = TRUE))
     }
   })
-  
-  # Expose the logged-in status to the UI
   output$loggedIn <- reactive({ logged_in() })
   outputOptions(output, "loggedIn", suspendWhenHidden = FALSE)
   
-  # Main app code, only accessible after login
+  # ---- App logic after login ----
   observe({
     req(logged_in())
     
-    # Reactive values to store portfolio data and transaction details
     portfolios <- reactiveValues(data = list())
     stock_transactions <- reactiveValues()
     
-    # Generate dynamic transaction inputs for each stock with inner frames
+    # Manage tickers (remove one / clear all)
+    output$remove_ticker_ui <- renderUI({
+      choices_vec <- if (is.null(input$stocks)) character(0) else input$stocks
+      selectInput("remove_ticker", "Ticker to remove:", choices = choices_vec, selected = NULL)
+    })
+    observeEvent(input$remove_ticker_btn, {
+      req(input$remove_ticker)
+      new_sel <- setdiff(input$stocks, input$remove_ticker)
+      updateSelectInput(session, "stocks", selected = new_sel)
+      stock_transactions[[input$remove_ticker]] <- NULL
+    })
+    observeEvent(input$clear_tickers, {
+      updateSelectInput(session, "stocks", selected = character(0))
+      for (nm in names(stock_transactions)) stock_transactions[[nm]] <- NULL
+    })
+    
+    # Dynamic per-stock share inputs
     output$transaction_inputs <- renderUI({
       req(input$stocks)
       lapply(input$stocks, function(stock) {
-        
-        # Initialize transaction list for each stock if not already present
-        if (is.null(stock_transactions[[stock]])) {
-          stock_transactions[[stock]] <- list(1)
-        }
-        
-        # Per-stock inputs (shares only; dates are global)
-        tagList(
-          div(
-            h4(stock),
-            lapply(stock_transactions[[stock]], function(i) {
-              tagList(
-                numericInput(paste0(stock, "_shares_", i), label = paste("Shares (select the number of shares(can be fractional))", i), value = 1, min = 0, step = 0.01)
-              )
-            }),
-            class = "stock-frame"
-          )
+        if (is.null(stock_transactions[[stock]])) stock_transactions[[stock]] <- list(1)
+        div(
+          h4(stock),
+          lapply(stock_transactions[[stock]], function(i) {
+            numericInput(paste0(stock, "_shares_", i), label = paste("Shares", i), value = 1, min = 0, step = 0.01)
+          }),
+          class = "stock-frame"
         )
       })
     })
     
-    # Save all transactions for each stock when 'Save Portfolio' is clicked
+    # Save portfolio
     observeEvent(input$save_portfolio, {
       portfolio_name <- input$portfolio_name
-      req(input$stocks, portfolio_name)
+      req(portfolio_name, nzchar(portfolio_name), input$stocks)
       
-      # Compile all transactions from each stock
       new_transactions <- bind_rows(lapply(input$stocks, function(stock) {
         do.call(rbind, lapply(stock_transactions[[stock]], function(i) {
-          shares <- abs(input[[paste0(stock, "_shares_", i)]])  # always positive (default Buy)
-          data.frame(
-            Stock = stock,
-            Type = "Buy",
-            Date = as.Date(input$start_date),
-            Shares = shares,
-            stringsAsFactors = FALSE
-          )
+          shares <- abs(input[[paste0(stock, "_shares_", i)]])
+          data.frame(Stock = stock, Type = "Buy", Date = as.Date(input$start_date), Shares = shares, stringsAsFactors = FALSE)
         }))
       }))
       
-      # Save the portfolio with transactions to the portfolios list
       portfolios$data[[portfolio_name]] <- new_transactions
-      updateSelectInput(session, "portfolios_to_plot", choices = names(portfolios$data))
+      updateCheckboxGroupInput(session, "portfolios_to_plot",
+                               choices = names(portfolios$data),
+                               selected = intersect(input$portfolios_to_plot, names(portfolios$data)))
     })
     
-    # Render the dataframe only if the checkbox is checked
+    # Data table
     dataframe_to_display <- reactiveVal(NULL)
-    
     observe({
       req(input$show_dataframe, input$portfolios_to_plot)
-      
-      # Combine data from selected portfolios
-      dataframe_to_display(bind_rows(lapply(input$portfolios_to_plot, function(portfolio_name) {
+      sel <- input$portfolios_to_plot
+      dataframe_to_display(bind_rows(lapply(sel, function(portfolio_name) {
         portfolio_transactions <- portfolios$data[[portfolio_name]]
         
         stock_values <- lapply(unique(portfolio_transactions$Stock), function(stock) {
-          # Load stock data
           stock_data <- tryCatch({
             getSymbols(stock, src = "yahoo", from = input$start_date, to = input$end_date, auto.assign = FALSE)
           }, error = function(e) {
@@ -339,92 +300,73 @@ server <- function(input, output, session) {
           if (is.null(stock_data)) return(NULL)
           
           stock_prices <- Cl(stock_data)
-          stock_data_df <- data.frame(Date = index(stock_prices), Price = as.numeric(stock_prices))
+          stock_df <- data.frame(Date = index(stock_prices), Price = as.numeric(stock_prices))
           
-          # Calculate cumulative shares on each transaction date and propagate forward
-          stock_transactions_df <- portfolio_transactions %>%
+          tx_df <- portfolio_transactions %>%
             filter(Stock == stock) %>%
             arrange(Date) %>%
             mutate(CumulativeShares = cumsum(Shares)) %>%
-            complete(Date = seq(as.Date(input$start_date), max(stock_data_df$Date), by = "day")) %>%
+            complete(Date = seq(as.Date(input$start_date), max(stock_df$Date), by = "day")) %>%
             fill(CumulativeShares, .direction = "down") %>%
             mutate(CumulativeShares = replace_na(CumulativeShares, 0))
           
-          # Merge stock prices with transactions and ensure consistent cumulative shares for all dates
-          stock_data_df <- left_join(stock_data_df, stock_transactions_df, by = "Date") %>%
+          left_join(stock_df, tx_df, by = "Date") %>%
             arrange(Date) %>%
-            mutate(Value = CumulativeShares * Price) %>%
-            mutate(Portfolio = portfolio_name, Stock = stock) %>%
+            mutate(Value = CumulativeShares * Price,
+                   Portfolio = portfolio_name, Stock = stock) %>%
             select(Date, Stock, CumulativeShares, Price, Portfolio, Value)
-          
-          return(stock_data_df)
         }) %>% bind_rows()
-        return(stock_values)
+        stock_values
       })))
-      
-      output$dataframe_display <- DT::renderDataTable({
-        dataframe_to_display()
-      })
+      output$dataframe_display <- DT::renderDataTable({ dataframe_to_display() })
     })
     
-    # Display the main plot and enable download button only when "Download and Plot" is clicked
+    # Plot + returns on GO
     observeEvent(input$go, {
-      req(input$portfolios_to_plot)
+      sel_portfolios <- input$portfolios_to_plot
+      req(length(sel_portfolios) >= 1)
       
-      # Enable download button
       enable_download(TRUE)
       
-      # Combine data for all portfolios and calculate portfolio value
-      plot_data <- bind_rows(lapply(input$portfolios_to_plot, function(portfolio_name) {
+      plot_data <- bind_rows(lapply(sel_portfolios, function(portfolio_name) {
         portfolio_transactions <- portfolios$data[[portfolio_name]]
         
         stock_values <- lapply(unique(portfolio_transactions$Stock), function(stock) {
-          
-          # Load stock data
           stock_data <- tryCatch({
             getSymbols(stock, src = "yahoo", from = input$start_date, to = input$end_date, auto.assign = FALSE)
           }, error = function(e) {
             message(paste("Failed to load data for:", stock, "due to", e$message))
             return(NULL)
           })
-          
           if (is.null(stock_data)) return(NULL)
           
           stock_prices <- Cl(stock_data)
-          stock_data_df <- data.frame(Date = index(stock_prices), Price = as.numeric(stock_prices))
+          stock_df <- data.frame(Date = index(stock_prices), Price = as.numeric(stock_prices))
           
-          # Merge stock prices with transactions and fill in the shares held
-          stock_transactions_df <- portfolio_transactions %>%
+          tx_df <- portfolio_transactions %>%
             filter(Stock == stock) %>%
             arrange(Date) %>%
             mutate(CumulativeShares = cumsum(Shares)) %>%
-            complete(Date = seq(as.Date(input$start_date), max(stock_data_df$Date), by = "day")) %>%
+            complete(Date = seq(as.Date(input$start_date), max(stock_df$Date), by = "day")) %>%
             fill(CumulativeShares, .direction = "down") %>%
             mutate(CumulativeShares = replace_na(CumulativeShares, 0))
           
-          # Merge transactions with stock prices and calculate daily values for each stock position
-          stock_data_df <- left_join(stock_data_df, stock_transactions_df, by = "Date") %>%
+          left_join(stock_df, tx_df, by = "Date") %>%
             arrange(Date) %>%
-            mutate(Value = CumulativeShares * Price) %>%
-            mutate(Portfolio = portfolio_name, Stock = stock) %>%
+            mutate(Value = CumulativeShares * Price,
+                   Portfolio = portfolio_name, Stock = stock) %>%
             select(Date, Stock, Value, Portfolio, CumulativeShares, Price)
-          
-          return(stock_data_df)
         }) %>% bind_rows()
-        
-        return(stock_values)
+        stock_values
       }))
       
-      # Summarize the data to calculate total portfolio value for each date
       portfolio_data <- plot_data %>%
         group_by(Date, Portfolio) %>%
         summarise(Total_Portfolio_Value = sum(Value, na.rm = TRUE), .groups = 'drop')
       
-      # Store for the report
       rv$plot_data <- plot_data
       rv$portfolio_data <- portfolio_data
       
-      # ===== compute daily returns per portfolio for histogram =====
       rets_data <- portfolio_data %>%
         group_by(Portfolio) %>%
         arrange(Date, .by_group = TRUE) %>%
@@ -432,122 +374,111 @@ server <- function(input, output, session) {
         filter(!is.na(Return)) %>%
         ungroup()
       rv$rets_data <- rets_data
-      # ============================================================
       
-      # Define a color palette with distinct colors
       stock_colors <- RColorBrewer::brewer.pal(n = min(12, length(unique(plot_data$Stock))), "Set1")
       portfolio_colors <- RColorBrewer::brewer.pal(n = min(8, length(unique(portfolio_data$Portfolio))), "Dark2")
       
-      # Plot based on the chosen plot type
       if (nrow(portfolio_data) > 0) {
         if (input$plot_type == "Portfolio") {
-          fig <- plot_ly(data = portfolio_data, x = ~Date, y = ~Total_Portfolio_Value, color = ~Portfolio, type = 'scatter', mode = 'lines',
-                         colors = portfolio_colors,
+          fig <- plot_ly(data = portfolio_data, x = ~Date, y = ~Total_Portfolio_Value, color = ~Portfolio,
+                         type = 'scatter', mode = 'lines', colors = portfolio_colors,
                          text = ~paste("Portfolio:", Portfolio, "<br>Date:", Date, "<br>Total Value:", round(Total_Portfolio_Value, 2)),
                          hoverinfo = "text") %>%
-            layout(
-              paper_bgcolor = "#1e1e1e",
-              plot_bgcolor = "#1e1e1e",
-              font = list(color = "#00BFFF"),
-              xaxis = list(title = "Date"),
-              yaxis = list(title = "Portfolio Value (USD)")
-            )
-          
+            layout(paper_bgcolor = "#1e1e1e", plot_bgcolor = "#1e1e1e", font = list(color = "#00BFFF"),
+                   xaxis = list(title = "Date"), yaxis = list(title = "Portfolio Value (USD)"))
         } else if (input$plot_type == "Individual") {
-          fig <- plot_ly(data = plot_data, x = ~Date, y = ~Value, color = ~Stock, type = 'scatter', mode = 'lines',
-                         colors = stock_colors,
-                         text = ~paste("Portfolio:", Portfolio, "<br>Stock:", Stock, "<br>Date:", Date, "<br>Price:", round(Price, 2),
-                                       "<br>Shares Held:", round(CumulativeShares, 2), "<br>Position Value:", round(Value, 2)),
-                         hoverinfo = "text") %>%
-            layout(
-              paper_bgcolor = "#1e1e1e",
-              plot_bgcolor = "#1e1e1e",
-              font = list(color = "#00BFFF"),
-              xaxis = list(title = "Date"),
-              yaxis = list(title = "Stock Value (USD)")
-            )
-          
-        } else {  # Both
-          fig <- plot_ly(data = plot_data, x = ~Date, y = ~Value, color = ~Stock, type = 'scatter', mode = 'lines',
-                         colors = stock_colors,
+          fig <- plot_ly(data = plot_data, x = ~Date, y = ~Value, color = ~Stock,
+                         type = 'scatter', mode = 'lines', colors = stock_colors,
                          text = ~paste("Portfolio:", Portfolio, "<br>Stock:", Stock, "<br>Date:", Date,
-                                       "<br>Price:", round(Price, 2), "<br>Shares Held:", round(CumulativeShares, 2),
+                                       "<br>Price:", round(Price, 2), "<br>Shares:", round(CumulativeShares, 2),
                                        "<br>Position Value:", round(Value, 2)),
-                         hoverinfo = "text")
-          
-          fig <- fig %>% add_trace(data = portfolio_data,
-                                   x = ~Date, y = ~Total_Portfolio_Value, color = ~Portfolio, type = 'scatter', mode = 'lines',
-                                   colors = portfolio_colors,
-                                   name = ~Portfolio, text = ~paste("Portfolio:", Portfolio, "<br>Date:", Date,
-                                                                    "<br>Total Value:", round(Total_Portfolio_Value, 2)),
-                                   hoverinfo = "text") %>%
-            layout(
-              paper_bgcolor = "#1e1e1e",
-              plot_bgcolor = "#1e1e1e",
-              font = list(color = "#00BFFF"),
-              xaxis = list(title = "Date"),
-              yaxis = list(title = "Value (USD)")
-            )
+                         hoverinfo = "text") %>%
+            layout(paper_bgcolor = "#1e1e1e", plot_bgcolor = "#1e1e1e", font = list(color = "#00BFFF"),
+                   xaxis = list(title = "Date"), yaxis = list(title = "Stock Value (USD)"))
+        } else { # Both
+          fig <- plot_ly(data = plot_data, x = ~Date, y = ~Value, color = ~Stock,
+                         type = 'scatter', mode = 'lines', colors = stock_colors,
+                         text = ~paste("Portfolio:", Portfolio, "<br>Stock:", Stock, "<br>Date:", Date,
+                                       "<br>Price:", round(Price, 2), "<br>Shares:", round(CumulativeShares, 2),
+                                       "<br>Position Value:", round(Value, 2)),
+                         hoverinfo = "text") %>%
+            add_trace(data = portfolio_data, x = ~Date, y = ~Total_Portfolio_Value, color = ~Portfolio,
+                      type = 'scatter', mode = 'lines', colors = portfolio_colors,
+                      name = ~Portfolio,
+                      text = ~paste("Portfolio:", Portfolio, "<br>Date:", Date,
+                                    "<br>Total Value:", round(Total_Portfolio_Value, 2)),
+                      hoverinfo = "text") %>%
+            layout(paper_bgcolor = "#1e1e1e", plot_bgcolor = "#1e1e1e", font = list(color = "#00BFFF"),
+                   xaxis = list(title = "Date"), yaxis = list(title = "Value (USD)"))
         }
-        
         output$stock_plot <- renderPlotly({ fig })
       } else {
         output$stock_plot <- renderPlotly({
-          plot_ly() %>%
-            layout(
-              title = "No Data to Display",
-              xaxis = list(title = "Date"),
-              yaxis = list(title = "Value (USD)")
-            )
+          plot_ly() %>% layout(title = "No Data to Display",
+                               xaxis = list(title = "Date"), yaxis = list(title = "Value (USD)"))
         })
       }
       
-      # ===== Plotly histogram of daily returns with RED density line =====
-      output$returns_hist_plot <- renderPlotly({
-        req(rv$rets_data)
-        # Use density scale so we can overlay density line without scaling issues
-        p <- plot_ly(rv$rets_data, x = ~Return, color = ~Portfolio, type = "histogram",
-                     nbinsx = 50, histnorm = "probability density") %>%
-          layout(
-            bargap = 0.05,
-            paper_bgcolor = "#1e1e1e",
-            plot_bgcolor = "#1e1e1e",
-            font = list(color = "#00BFFF"),
-            xaxis = list(title = "Daily Return", tickformat = ".2%"),
-            yaxis = list(title = "Density"),
-            legend = list(orientation = "h")
+      # Dynamic per-portfolio histograms (Plotly)
+      hist_ids <- paste0("hist_", make.names(sel_portfolios))
+      output$returns_hist_container <- renderUI({
+        tagList(lapply(seq_along(sel_portfolios), function(i) {
+          div(
+            h4(paste0("Daily Returns Histogram — ", sel_portfolios[i])),
+            plotlyOutput(hist_ids[i], height = "320px"),
+            style = "margin-bottom:18px;"
           )
-        # Add pooled density line (red)
-        dens <- density(rv$rets_data$Return, na.rm = TRUE)
-        p <- add_lines(p, x = dens$x, y = dens$y, name = "Density",
-                       line = list(color = "red", width = 2), inherit = FALSE, hoverinfo = "skip")
-        p
+        }))
       })
-      # =========================================================
+      lapply(seq_along(sel_portfolios), function(i) {
+        local({
+          pid <- sel_portfolios[i]
+          out_id <- hist_ids[i]
+          output[[out_id]] <- renderPlotly({
+            req(rv$rets_data)
+            dat <- rv$rets_data %>% filter(Portfolio == pid)
+            p <- plot_ly(dat, x = ~Return, type = "histogram",
+                         nbinsx = 50, histnorm = "probability density",
+                         marker = list(line = list(width = 0))) %>%
+              layout(
+                title = paste("Histogram (", pid, ")"),
+                bargap = 0.05,
+                paper_bgcolor = "#1e1e1e",
+                plot_bgcolor = "#1e1e1e",
+                font = list(color = "#00BFFF"),
+                xaxis = list(title = "Daily Return", tickformat = ".2%"),
+                yaxis = list(title = "Density"),
+                showlegend = FALSE
+              )
+            dens <- density(dat$Return, na.rm = TRUE)
+            add_lines(p, x = dens$x, y = dens$y, name = "Density",
+                      line = list(color = "red", width = 2), inherit = FALSE, hoverinfo = "skip")
+          })
+        })
+      })
     })
     
-    # ---- Portfolio Report renderer (with title, subtitle, date on top-right) ----
+    # On-screen report (lists included portfolios)
     output$portfolio_report <- renderUI({
-      req(rv$portfolio_data, rv$plot_data, input$portfolios_to_plot)
+      sel <- input$portfolios_to_plot
+      req(rv$portfolio_data, rv$plot_data, length(sel) >= 1)
       
-      fmt_pct <- function(x) ifelse(is.na(x), "—", paste0(sprintf("%.2f", 100*x), "%"))
-      fmt_usd <- function(x) ifelse(is.na(x), "—", paste0("$", formatC(x, big.mark = ",", format = "f", digits = 2)))
+      fmt_pct  <- function(x) ifelse(is.na(x), "—", paste0(sprintf("%.2f", 100*x), "%"))
+      fmt_usd  <- function(x) ifelse(is.na(x), "—", paste0("$", formatC(x, big.mark = ",", format = "f", digits = 2)))
       fmt_date <- function(x) ifelse(is.na(x), "—", format(as.Date(x), "%Y-%m-%d"))
       
       header <- tags$div(
         style = "display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;",
         tags$div(
-          tags$h2("Reporte de Portafolio", style = "margin:0; color:#00BFFF;"),
+          tags$h2("Reporte de Portafolio", style = "margin:0;"),
           tags$h4("app https://joseahumada.shinyapps.io/portfolio/ creada por José Ahumada Castillo",
-                  style = "margin:0; color:#9ecff5; font-weight:normal;")
+                  style = "margin:0; color:#9ecff5; font-weight:normal;"),
+          tags$p(HTML(paste0("<i>Portfolios incluidos: <b>", paste(sel, collapse = ", "), "</b></i>")))
         ),
-        tags$div(
-          style = "text-align:right; color:#00BFFF; font-weight:bold;",
-          format(Sys.Date(), "%Y-%m-%d")
-        )
+        tags$div(style = "text-align:right; font-weight:bold;", format(Sys.Date(), "%Y-%m-%d"))
       )
       
-      panels <- lapply(input$portfolios_to_plot, function(pn) {
+      panels <- lapply(sel, function(pn) {
         pd <- rv$portfolio_data %>% filter(Portfolio == pn) %>% arrange(Date)
         req(nrow(pd) > 1)
         
@@ -567,26 +498,18 @@ server <- function(input, output, session) {
         q05 <- ifelse(length(rets) > 0, as.numeric(quantile(rets, probs = 0.05, na.rm = TRUE)), NA_real_)
         var95_pct <- ifelse(is.na(q05), NA_real_, -q05)
         var95_abs <- ifelse(is.na(var95_pct), NA_real_, var95_pct * last_val)
-        # NEW: Annualized VaR (sqrt(252) scaling)
         var95_pct_ann <- ifelse(is.na(var95_pct), NA_real_, var95_pct * sqrt(252))
         var95_abs_ann <- ifelse(is.na(var95_pct_ann), NA_real_, var95_pct_ann * last_val)
         
-        stocks_in <- rv$plot_data %>%
-          filter(Portfolio == pn) %>%
-          distinct(Stock) %>%
-          arrange(Stock) %>%
-          pull(Stock)
-        
-        start_d <- input$start_date
-        end_d   <- input$end_date
+        stocks_in <- rv$plot_data %>% filter(Portfolio == pn) %>% distinct(Stock) %>% arrange(Stock) %>% pull(Stock)
         
         tags$div(
           style = "margin-top:6px;",
-          tags$h3(paste("Portafolio:", pn), style = "color:#00BFFF;"),
-          tags$p(paste("Fechas:", fmt_date(start_d), "→", fmt_date(end_d))),
+          tags$h3(paste("Portafolio:", pn)),
+          tags$p(paste("Fechas:", fmt_date(input$start_date), "→", fmt_date(input$end_date))),
           tags$p(HTML(paste0("Stocks contenidos: <b>", paste(stocks_in, collapse = ", "), "</b>"))),
           tags$table(
-            style = "width:100%; color:#00BFFF;",
+            style = "width:100%;",
             tags$tbody(
               tags$tr(tags$td("Rendimiento del periodo"), tags$td(style="text-align:right;", fmt_pct(period_ret))),
               tags$tr(tags$td("Varianza (diaria) del periodo"), tags$td(style="text-align:right;", ifelse(is.na(var_daily),"—",sprintf("%.6f", var_daily)))),
@@ -594,7 +517,6 @@ server <- function(input, output, session) {
               tags$tr(tags$td("Varianza anualizada"), tags$td(style="text-align:right;", ifelse(is.na(var_ann),"—",sprintf("%.6f", var_ann)))),
               tags$tr(tags$td("VaR 95% (diario, % de pérdida)"), tags$td(style="text-align:right;", fmt_pct(var95_pct))),
               tags$tr(tags$td("VaR 95% (diario, monto)"), tags$td(style="text-align:right;", fmt_usd(var95_abs))),
-              # NEW rows:
               tags$tr(tags$td("VaR 95% anualizado (%, pérdida)"), tags$td(style="text-align:right;", fmt_pct(var95_pct_ann))),
               tags$tr(tags$td("VaR 95% anualizado (monto)"), tags$td(style="text-align:right;", fmt_usd(var95_abs_ann))),
               tags$tr(tags$td("Valor inicial"), tags$td(style="text-align:right;", fmt_usd(first_val))),
@@ -608,184 +530,285 @@ server <- function(input, output, session) {
       
       do.call(tagList, c(list(header), panels))
     })
-    # ---- end report ----
     
-    # Enable download button based on enable_download value
-    observe({
-      shinyjs::toggleState("download_dataframe", condition = enable_download())
-    })
+    # Enable dataframe download once plotted
+    observe({ shinyjs::toggleState("download_dataframe", condition = enable_download()) })
     
-    # Dataframe download handler
     output$download_dataframe <- downloadHandler(
-      filename = function() {
-        paste("dataframe_", Sys.Date(), ".csv", sep = "")
-      },
-      content = function(file) {
-        write.csv(dataframe_to_display(), file, row.names = FALSE)
-      }
+      filename = function() paste("dataframe_", Sys.Date(), ".csv", sep = ""),
+      content  = function(file) write.csv(dataframe_to_display(), file, row.names = FALSE)
     )
     
-    # ---- Download handler for report PDF (line plot BLUE, histogram with RED density; TEXT FIRST, THEN PLOTS) ----
-    output$download_report_pdf <- downloadHandler(
-      filename = function() {
-        paste0("reporte_portafolio_", Sys.Date(), ".pdf")
-      },
-      content = function(file) {
-        req(rv$portfolio_data, input$portfolios_to_plot)
+    # ---------- Report builders & downloaders ----------
+    # Helper to build the full light-mode (white bg) HTML document with Garamond 12pt
+    build_report_html <- function(sel) {
+      fmt_pct  <- function(x) ifelse(is.na(x), "—", paste0(sprintf("%.2f", 100*x), "%"))
+      fmt_usd  <- function(x) ifelse(is.na(x), "—", paste0("$", formatC(x, big.mark = ",", format = "f", digits = 2)))
+      fmt_date <- function(x) ifelse(is.na(x), "—", format(as.Date(x), "%Y-%m-%d"))
+      
+      header <- tags$div(
+        style = "display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;",
+        tags$div(
+          tags$h2("Reporte de Portafolio", style = "margin:0;"),
+          tags$h4("app https://joseahumada.shinyapps.io/portfolio/ creada por José Ahumada Castillo",
+                  style = "margin:0; color:#555; font-weight:normal;"),
+          tags$p(HTML(paste0("<i>Portfolios incluidos: <b>", paste(sel, collapse = ", "), "</b></i>")))
+        ),
+        tags$div(style = "text-align:right; font-weight:bold;", format(Sys.Date(), "%Y-%m-%d"))
+      )
+      
+      # ----- Time series ggplot (different color per portfolio) -----
+      pd_all <- rv$portfolio_data %>%
+        filter(Portfolio %in% sel) %>%
+        arrange(Date)
+      
+      gg_tag <- NULL
+      if (nrow(pd_all) > 0) {
+        base_pal <- c("blue", "red", "green", "purple", "gold", "orange",
+                      "brown", "pink", "cyan", "magenta")
+        portfolios_unique <- unique(pd_all$Portfolio)
+        pal_use <- setNames(rep(base_pal, length.out = length(portfolios_unique)),
+                            portfolios_unique)
         
-        fmt_pct <- function(x) ifelse(is.na(x), "—", paste0(sprintf("%.2f", 100*x), "%"))
-        fmt_usd <- function(x) ifelse(is.na(x), "—", paste0("$", formatC(x, big.mark = ",", format = "f", digits = 2)))
-        fmt_date <- function(x) ifelse(is.na(x), "—", format(as.Date(x), "%Y-%m-%d"))
-        
-        # Header (same as UI)
-        header <- tags$div(
-          style = "display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px;",
-          tags$div(
-            tags$h2("Reporte de Portafolio", style = "margin:0; color:#00BFFF;"),
-            tags$h4("app https://joseahumada.shinyapps.io/portfolio/ creada por José Ahumada Castillo",
-                    style = "margin:0; color:#9ecff5; font-weight:normal;")
-          ),
-          tags$div(
-            style = "text-align:right; color:#00BFFF; font-weight:bold;",
-            format(Sys.Date(), "%Y-%m-%d")
-          )
+        subtitle_text <- paste0(
+          "Portafolios: ", paste(sel, collapse = ", "),
+          " • Fechas: ", fmt_date(input$start_date), " a ", fmt_date(input$end_date)
         )
+        caption_text <- "Fuente: Yahoo Finance vía quantmod · Reporte generado por la app Portfolio Analysis App creada por José Ahumada Castillo"
         
-        # ---- ggplot line chart (Economist) in BLUE ----
-        pd_all <- rv$portfolio_data %>%
-          filter(Portfolio %in% input$portfolios_to_plot) %>%
-          arrange(Date)
-        gg_tag <- NULL
-        if (nrow(pd_all) > 0) {
-          g <- ggplot(pd_all, aes(x = Date, y = Total_Portfolio_Value)) +
-            geom_line(linewidth = 1, color = "blue") +  # BLUE line
-            scale_y_continuous(labels = scales::dollar_format(prefix = "$", big.mark = ",")) +
-            labs(title = "Evolución del Valor del Portafolio",
-                 x = "Fecha", y = "Valor del Portafolio (USD)") +
-            ggthemes::theme_economist() +
-            theme(plot.title = element_text(hjust = 0.5))
-          tmp_png <- tempfile(fileext = ".png")
-          ggsave(filename = tmp_png, plot = g, width = 10, height = 5, dpi = 150, bg = "white")
-          img_b64 <- base64enc::base64encode(tmp_png)
-          gg_tag <- tags$img(
-            src = paste0("data:image/png;base64,", img_b64),
-            style = "width:100%; max-width:100%; height:auto; margin: 8px 0 16px 0; border: 1px solid #333333; border-radius: 4px;"
+        g <- ggplot(pd_all,
+                    aes(x = Date,
+                        y = Total_Portfolio_Value,
+                        color = Portfolio,
+                        group = Portfolio)) +
+          geom_line(linewidth = 1) +
+          scale_color_manual(values = pal_use) +
+          scale_y_continuous(labels = scales::dollar_format(prefix = "$", big.mark = ",")) +
+          labs(
+            title = "Serie de Tiempo del Valor de los Portafolios",
+            subtitle = subtitle_text,
+            x = "Fecha",
+            y = "Valor del Portafolio (USD)",
+            color = "Portafolio",
+            caption = caption_text
+          ) +
+          ggthemes::theme_economist() +
+          theme(
+            plot.title = element_text(hjust = 0.5, face = "bold"),
+            plot.subtitle = element_text(hjust = 0.5),
+            plot.caption = element_text(size = 8),
+            plot.title.position = "plot",
+            plot.caption.position = "plot"
           )
-        }
         
-        # ---- ggplot histogram of daily returns (Economist) + RED density line ----
-        hist_tag <- NULL
-        if (!is.null(rv$rets_data) && nrow(rv$rets_data) > 0) {
-          g_hist <- ggplot(rv$rets_data, aes(x = Return, fill = Portfolio)) +
-            geom_histogram(aes(y = after_stat(density)), bins = 50, alpha = 0.8,
-                           position = "identity", color = "white", linewidth = 0.15) +
-            geom_density(aes(x = Return), color = "red", linewidth = 1, inherit.aes = FALSE) +  # RED density
-            scale_x_continuous(labels = scales::percent_format(accuracy = 0.01)) +
-            labs(title = "Histograma de Rendimientos Diarios del Portafolio",
-                 x = "Rendimiento Diario", y = "Densidad", fill = "Portafolio") +
-            ggthemes::theme_economist() +
-            ggthemes::scale_fill_economist() +
-            theme(plot.title = element_text(hjust = 0.5))
-          tmp_png_h <- tempfile(fileext = ".png")
-          ggsave(filename = tmp_png_h, plot = g_hist, width = 10, height = 5, dpi = 150, bg = "white")
-          img_b64_h <- base64enc::base64encode(tmp_png_h)
-          hist_tag <- tags$img(
-            src = paste0("data:image/png;base64,", img_b64_h),
-            style = "width:100%; max-width:100%; height:auto; margin: 8px 0 16px 0; border: 1px solid #333333; border-radius: 4px;"
-          )
-        }
-        
-        # Panels per portfolio (metrics incl. new items)
-        panels <- lapply(input$portfolios_to_plot, function(pn) {
-          pd <- rv$portfolio_data %>% filter(Portfolio == pn) %>%
-            arrange(Date)
-          validate(need(nrow(pd) > 1, "No hay datos suficientes para el reporte."))
-          
-          pd <- pd %>% mutate(ret = (Total_Portfolio_Value / dplyr::lag(Total_Portfolio_Value)) - 1)
-          rets <- pd$ret[!is.na(pd$ret)]
-          
-          first_val <- dplyr::first(pd$Total_Portfolio_Value)
-          last_val  <- dplyr::last(pd$Total_Portfolio_Value)
-          max_val   <- max(pd$Total_Portfolio_Value, na.rm = TRUE)
-          min_val   <- min(pd$Total_Portfolio_Value, na.rm = TRUE)
-          
-          period_ret <- ifelse(first_val > 0, last_val/first_val - 1, NA_real_)
-          var_daily  <- ifelse(length(rets) > 1, var(rets, na.rm = TRUE), NA_real_)
-          var_ann    <- ifelse(is.na(var_daily), NA_real_, var_daily * 252)
-          ann_ret    <- ifelse(length(rets) > 0, (1 + period_ret)^(252/length(rets)) - 1, NA_real_)
-          
-          q05 <- ifelse(length(rets) > 0, as.numeric(quantile(rets, probs = 0.05, na.rm = TRUE)), NA_real_)
-          var95_pct <- ifelse(is.na(q05), NA_real_, -q05)
-          var95_abs <- ifelse(is.na(var95_pct), NA_real_, var95_pct * last_val)
-          # NEW: Annualized VaR (sqrt(252) scaling)
-          var95_pct_ann <- ifelse(is.na(var95_pct), NA_real_, var95_pct * sqrt(252))
-          var95_abs_ann <- ifelse(is.na(var95_pct_ann), NA_real_, var95_pct_ann * last_val)
-          
-          stocks_in <- rv$plot_data %>%
-            filter(Portfolio == pn) %>%
-            distinct(Stock) %>%
-            arrange(Stock) %>%
-            pull(Stock)
-          
-          start_d <- input$start_date
-          end_d   <- input$end_date
-          
-          tags$div(
-            style = "margin-top:6px;",
-            tags$h3(paste("Portafolio:", pn), style = "color:#00BFFF;"),
-            tags$p(paste("Fechas:", fmt_date(start_d), "→", fmt_date(end_d))),
-            tags$p(HTML(paste0("Stocks contenidos: <b>", paste(stocks_in, collapse = ", "), "</b>"))),
-            tags$table(
-              style = "width:100%; color:#00BFFF;",
-              tags$tbody(
-                tags$tr(tags$td("Rendimiento del periodo"), tags$td(style="text-align:right;", fmt_pct(period_ret))),
-                tags$tr(tags$td("Varianza (diaria) del periodo"), tags$td(style="text-align:right;", ifelse(is.na(var_daily),"—",sprintf("%.6f", var_daily)))),
-                tags$tr(tags$td("Rendimiento anualizado"), tags$td(style="text-align:right;", fmt_pct(ann_ret))),
-                tags$tr(tags$td("Varianza anualizada"), tags$td(style="text-align:right;", ifelse(is.na(var_ann),"—",sprintf("%.6f", var_ann)))),
-                tags$tr(tags$td("VaR 95% (diario, % de pérdida)"), tags$td(style="text-align:right;", fmt_pct(var95_pct))),
-                tags$tr(tags$td("VaR 95% (diario, monto)"), tags$td(style="text-align:right;", fmt_usd(var95_abs))),
-                # NEW rows:
-                tags$tr(tags$td("VaR 95% anualizado (%, pérdida)"), tags$td(style="text-align:right;", fmt_pct(var95_pct_ann))),
-                tags$tr(tags$td("VaR 95% anualizado (monto)"), tags$td(style="text-align:right;", fmt_usd(var95_abs_ann))),
-                tags$tr(tags$td("Valor inicial"), tags$td(style="text-align:right;", fmt_usd(first_val))),
-                tags$tr(tags$td("Valor máximo"), tags$td(style="text-align:right;", fmt_usd(max_val))),
-                tags$tr(tags$td("Valor mínimo"), tags$td(style="text-align:right;", fmt_usd(min_val))),
-                tags$tr(tags$td("Valor final"),  tags$td(style="text-align:right;", fmt_usd(last_val)))
+        tmp_png <- tempfile(fileext = ".png")
+        ggsave(filename = tmp_png, plot = g, width = 10, height = 5, dpi = 150, bg = "white")
+        gg_tag <- tags$img(
+          src = paste0("data:image/png;base64,", base64enc::base64encode(tmp_png)),
+          style = "width:100%; height:auto; margin: 8px 0 16px 0; border: 1px solid #ddd; border-radius: 4px;"
+        )
+      }
+      
+      # ----- Per-portfolio histograms (separate ggplots) -----
+      hist_imgs <- list()
+      if (!is.null(rv$rets_data) && nrow(rv$rets_data) > 0) {
+        for (pn in sel) {
+          dat <- rv$rets_data %>% filter(Portfolio == pn)
+          if (nrow(dat) > 0) {
+            subtitle_hist <- paste0(
+              "Periodo: ", fmt_date(input$start_date), " a ", fmt_date(input$end_date),
+              " • La línea roja muestra la densidad estimada"
+            )
+            caption_hist <- "Fuente: Yahoo Finance vía quantmod · Reporte generado por la app de José Ahumada Castillo"
+            
+            g_hist <- ggplot(dat, aes(x = Return)) +
+              geom_histogram(aes(y = after_stat(density)), bins = 50, alpha = 0.85,
+                             position = "identity", color = "white", linewidth = 0.15, fill = "#4575b4") +
+              geom_density(aes(x = Return), color = "red", linewidth = 1, inherit.aes = FALSE) +
+              scale_x_continuous(labels = scales::percent_format(accuracy = 0.01)) +
+              labs(
+                title = paste("Histograma de Rendimientos Diarios —", pn),
+                subtitle = subtitle_hist,
+                x = "Rendimiento Diario",
+                y = "Densidad",
+                caption = caption_hist
+              ) +
+              ggthemes::theme_economist() +
+              theme(
+                plot.title = element_text(hjust = 0.5, face = "bold"),
+                plot.subtitle = element_text(hjust = 0.5),
+                plot.caption = element_text(size = 8),
+                plot.title.position = "plot",
+                plot.caption.position = "plot"
               )
+            
+            tmp_png_h <- tempfile(fileext = ".png")
+            ggsave(filename = tmp_png_h, plot = g_hist, width = 10, height = 5, dpi = 150, bg = "white")
+            hist_imgs[[pn]] <- tags$img(
+              src = paste0("data:image/png;base64,", base64enc::base64encode(tmp_png_h)),
+              style = "width:100%; height:auto; margin: 8px 0 16px 0; border: 1px solid #ddd; border-radius: 4px;"
+            )
+          }
+        }
+      }
+      
+      # ----- Metrics panels (same math as on-screen) -----
+      panels <- lapply(sel, function(pn) {
+        pd <- rv$portfolio_data %>% filter(Portfolio == pn) %>% arrange(Date)
+        validate(need(nrow(pd) > 1, "No hay datos suficientes para el reporte."))
+        
+        pd <- pd %>% mutate(ret = (Total_Portfolio_Value / dplyr::lag(Total_Portfolio_Value)) - 1)
+        rets <- pd$ret[!is.na(pd$ret)]
+        
+        first_val <- dplyr::first(pd$Total_Portfolio_Value)
+        last_val  <- dplyr::last(pd$Total_Portfolio_Value)
+        max_val   <- max(pd$Total_Portfolio_Value, na.rm = TRUE)
+        min_val   <- min(pd$Total_Portfolio_Value, na.rm = TRUE)
+        
+        period_ret <- ifelse(first_val > 0, last_val/first_val - 1, NA_real_)
+        var_daily  <- ifelse(length(rets) > 1, var(rets, na.rm = TRUE), NA_real_)
+        var_ann    <- ifelse(is.na(var_daily), NA_real_, var_daily * 252)
+        ann_ret    <- ifelse(length(rets) > 0, (1 + period_ret)^(252/length(rets)) - 1, NA_real_)
+        
+        q05 <- ifelse(length(rets) > 0, as.numeric(quantile(rets, probs = 0.05, na.rm = TRUE)), NA_real_)
+        var95_pct <- ifelse(is.na(q05), NA_real_, -q05)
+        var95_abs <- ifelse(is.na(var95_pct), NA_real_, var95_pct * last_val)
+        var95_pct_ann <- ifelse(is.na(var95_pct), NA_real_, var95_pct * sqrt(252))
+        var95_abs_ann <- ifelse(is.na(var95_pct_ann), NA_real_, var95_pct_ann * last_val)
+        
+        stocks_in <- rv$plot_data %>% filter(Portfolio == pn) %>% distinct(Stock) %>% arrange(Stock) %>% pull(Stock)
+        
+        tags$div(
+          style = "margin-top:6px;",
+          tags$h3(paste("Portafolio:", pn)),
+          tags$p(paste("Fechas:", fmt_date(input$start_date), "→", fmt_date(input$end_date))),
+          tags$p(HTML(paste0("Stocks contenidos: <b>", paste(stocks_in, collapse = ", "), "</b>"))),
+          tags$table(
+            style = "width:100%;",
+            tags$tbody(
+              tags$tr(tags$td("Rendimiento del periodo"), tags$td(style="text-align:right;", fmt_pct(period_ret))),
+              tags$tr(tags$td("Varianza (diaria) del periodo"), tags$td(style="text-align:right;", ifelse(is.na(var_daily),"—",sprintf("%.6f", var_daily)))),
+              tags$tr(tags$td("Rendimiento anualizado"), tags$td(style="text-align:right;", fmt_pct(ann_ret))),
+              tags$tr(tags$td("Varianza anualizada"), tags$td(style="text-align:right;", ifelse(is.na(var_ann),"—",sprintf("%.6f", var_ann)))),
+              tags$tr(tags$td("VaR 95% (diario, % de pérdida)"), tags$td(style="text-align:right;", fmt_pct(var95_pct))),
+              tags$tr(tags$td("VaR 95% (diario, monto)"), tags$td(style="text-align:right;", fmt_usd(var95_abs))),
+              tags$tr(tags$td("VaR 95% anualizado (%, pérdida)"), tags$td(style="text-align:right;", fmt_pct(var95_pct_ann))),
+              tags$tr(tags$td("VaR 95% anualizado (monto)"), tags$td(style="text-align:right;", fmt_usd(var95_abs_ann))),
+              tags$tr(tags$td("Valor inicial"), tags$td(style="text-align:right;", fmt_usd(first_val))),
+              tags$tr(tags$td("Valor máximo"), tags$td(style="text-align:right;", fmt_usd(max_val))),
+              tags$tr(tags$td("Valor mínimo"), tags$td(style="text-align:right;", fmt_usd(min_val))),
+              tags$tr(tags$td("Valor final"),  tags$td(style="text-align:right;", fmt_usd(last_val)))
             )
           )
-        })
-        
-        # Assemble full HTML (TEXT FIRST, THEN PLOTS)
-        html_doc <- tags$html(
-          tags$head(
-            tags$meta(charset = "UTF-8"),
-            tags$title("Reporte de Portafolio"),
-            tags$style(HTML("
-              body { background: #1e1e1e; color:#00BFFF; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', 'Liberation Sans', sans-serif; padding: 16px; }
-              h2 { color:#00BFFF; margin:0; }
-              h3 { color:#00BFFF; }
-              h4 { color:#9ecff5; margin:0; }
-              table { width:100%; border-collapse: collapse; }
-              td { padding: 4px 0; }
-            "))
-          ),
-          tags$body(
-            header,
-            do.call(tagList, panels),     # TEXT / TABLES FIRST
-            if (!is.null(gg_tag)) gg_tag, # BLUE LINE PLOT
-            if (!is.null(hist_tag)) hist_tag  # HISTOGRAM WITH RED DENSITY
-          )
         )
-        
+      })
+      
+      # ----- Assemble LIGHT-MODE HTML (white background, black text) -----
+      tags$html(
+        tags$head(
+          tags$meta(charset = "UTF-8"),
+          tags$title("Reporte de Portafolio"),
+          # Load EB Garamond for the document
+          tags$link(rel="stylesheet", href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;700&display=swap"),
+          tags$style(HTML("
+            :root { --fg: #111111; --fg-subtle:#555555; --bg:#ffffff; }
+            body { background: var(--bg); color: var(--fg); 
+                   font-family: 'EB Garamond','GaramondPremrPro','Adobe Garamond Pro','EB Garamond', Garamond, serif; 
+                   font-size: 12pt; padding: 16px; }
+            h2 { margin:0; }
+            h3 { margin-top: 12px; }
+            h4 { margin:0; color: var(--fg-subtle); }
+            table { width:100%; border-collapse: collapse; }
+            td { padding: 4px 0; }
+          "))
+        ),
+        tags$body(
+          header,
+          do.call(tagList, panels),
+          if (!is.null(gg_tag)) gg_tag,
+          do.call(tagList, hist_imgs)
+        )
+      )
+    }
+    
+    # Helper that tries multiple PDF backends
+    make_pdf <- function(html_path, pdf_path) {
+      ok <- FALSE
+      
+      # Try pagedown + Chrome/Chromium
+      if (requireNamespace("pagedown", quietly = TRUE)) {
+        chrome_ok <- FALSE
+        try({
+          ch <- pagedown::find_chrome()
+          chrome_ok <- length(ch) > 0 && !is.na(ch)
+        }, silent = TRUE)
+        if (chrome_ok) {
+          try({
+            pagedown::chrome_print(input = html_path, output = pdf_path)
+            ok <- file.exists(pdf_path)
+          }, silent = TRUE)
+        }
+      }
+      
+      # Try webshot2 (needs Chrome as well, but worth trying)
+      if (!ok && requireNamespace("webshot2", quietly = TRUE)) {
+        try({
+          webshot2::webshot(url = html_path, file = pdf_path, vwidth = 1200, vheight = 2600, delay = 0.5)
+          ok <- file.exists(pdf_path)
+        }, silent = TRUE)
+      }
+      
+      # Try webshot + PhantomJS (we can install PhantomJS at runtime)
+      if (!ok && requireNamespace("webshot", quietly = TRUE)) {
+        try({
+          if (!webshot::is_phantomjs_installed()) webshot::install_phantomjs()
+          webshot::webshot(url = html_path, file = pdf_path, vwidth = 1200, vheight = 2600)
+          ok <- file.exists(pdf_path)
+        }, silent = TRUE)
+      }
+      
+      ok
+    }
+    
+    # ---- HTML download (always works) ----
+    output$download_report_html <- downloadHandler(
+      filename = function() paste0("reporte_portafolio_", Sys.Date(), ".html"),
+      content = function(file) {
+        sel <- input$portfolios_to_plot
+        req(rv$portfolio_data, length(sel) >= 1)
+        html_doc <- build_report_html(sel)
         tmp_html <- tempfile(fileext = ".html")
         htmltools::save_html(html_doc, tmp_html)
-        pagedown::chrome_print(input = tmp_html, output = file)
+        file.copy(tmp_html, file, overwrite = TRUE)
       }
     )
-    # ---- end PDF download ----
+    
+    # ---- PDF download with robust fallbacks ----
+    output$download_report_pdf <- downloadHandler(
+      filename = function() paste0("reporte_portafolio_", Sys.Date(), ".pdf"),
+      content = function(file) {
+        sel <- input$portfolios_to_plot
+        req(rv$portfolio_data, length(sel) >= 1)
+        
+        html_doc <- build_report_html(sel)
+        tmp_html <- tempfile(fileext = ".html")
+        htmltools::save_html(html_doc, tmp_html)
+        
+        ok <- make_pdf(tmp_html, file)
+        if (!ok) {
+          showModal(modalDialog(
+            title = "PDF export is not available on this server",
+            "I couldn't start a headless browser (Chrome/Chromium or PhantomJS).
+             Please use 'Download report (HTML)' and then print to PDF from your browser.",
+            easyClose = TRUE
+          ))
+          stop("PDF export unavailable: no headless renderer found.")
+        }
+      }
+    )
   })
 }
 
 # Run the Shiny App
 shinyApp(ui = ui, server = server)
+
